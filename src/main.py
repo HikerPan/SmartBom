@@ -62,9 +62,10 @@ def main():
 
     for index, row in df_raw.iterrows():
         # Development limit
-        if index >= 5:
-            print("Reached development limit (5 rows). Stopping.")
-            break
+        # Development limit removed
+        # if index >= 5:
+        #     print("Reached development limit (5 rows). Stopping.")
+        #     break
             
         # Extract fields (Adjust column names based on actual CSV)
         comment = str(row.get('Comment', ''))
