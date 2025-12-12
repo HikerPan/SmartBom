@@ -15,12 +15,53 @@ history_store = Chroma(
     persist_directory=CHROMA_DB_DIR
 )
 
+from src.utils import load_data
+import pandas as pd
+
+# Load inventory data for exact matching
+try:
+    df_inventory = load_data("data/inventory.xlsx")
+    print(f"Loaded {len(df_inventory)} inventory items for exact matching.")
+except Exception as e:
+    print(f"Warning: Could not load inventory.xlsx for exact matching: {e}")
+    df_inventory = pd.DataFrame()
+
 class InventorySearchTool(BaseTool):
     name: str = "Inventory Search Tool"
-    description: str = "Search for components in the ERP inventory. Input should be a string containing component description, footprint, and value."
+    description: str = "Search for components in the ERP inventory. Input can be a structured string 'Value:xxx|Footprint:yyy' or a plain text query."
 
     def _run(self, query: str) -> str:
-        # Search Top 3
+        # 1. Try Structured Exact/Partial Match using Pandas
+        if "Value:" in query and "Footprint:" in query:
+            try:
+                # Parse query "Value:0.1uF|Footprint:0402"
+                parts = query.split("|")
+                val_part = [p for p in parts if p.startswith("Value:")][0]
+                fp_part = [p for p in parts if p.startswith("Footprint:")][0]
+                
+                val = val_part.split(":", 1)[1].strip()
+                fp = fp_part.split(":", 1)[1].strip()
+                
+                if not df_inventory.empty:
+                    # Filter logic: Name contains Value AND Spec contains Footprint
+                    # Using string contains for flexibility
+                    matches = df_inventory[
+                        df_inventory['存货名称'].astype(str).str.contains(val, case=False, regex=False) & 
+                        df_inventory['规格型号'].astype(str).str.contains(fp, case=False, regex=False)
+                    ]
+                    
+                    if not matches.empty:
+                        # Return top 3 matches
+                        formatted_results = []
+                        for _, row in matches.head(3).iterrows():
+                            content = f"名称: {row.get('存货名称', '')}, 规格: {row.get('规格型号', '')}, 供应商: {row.get('主要供货单位名称', '')}"
+                            metadata = {"code": str(row.get('存货编码', '')), "spec": str(row.get('规格型号', ''))}
+                            formatted_results.append(f"Source: Inventory (Exact Match) | Content: {content} | Metadata: {metadata}")
+                        return "\n".join(formatted_results)
+            except Exception as e:
+                print(f"Structured search failed: {e}")
+
+        # 2. Fallback to Vector Search
         results = inventory_store.similarity_search_with_score(query, k=3)
         
         if not results:
@@ -28,22 +69,9 @@ class InventorySearchTool(BaseTool):
             
         formatted_results = []
         for doc, score in results:
-            # Chroma returns distance by default for some metrics, but let's assume cosine similarity or convert.
-            # However, langchain_chroma default might be L2 or Cosine. 
-            # If using default, lower score might be better (distance) or higher is better (similarity).
-            # OpenAI embeddings are normalized, so dot product is cosine similarity.
-            # Chroma default is usually L2. 
-            # Let's assume we just return the content and let the LLM decide, 
-            # BUT the guide mentions "score > 0.95". 
-            # If using similarity_search_with_relevance_score, it returns 0-1.
-            
-            # Let's use similarity_search_with_relevance_scores if possible, or just return the info.
-            # The guide says: "HistorySearchTool... score > 0.95". 
-            # Inventory search just says "Search Top 3".
-            
             content = doc.page_content
             metadata = doc.metadata
-            formatted_results.append(f"Content: {content} | Metadata: {metadata}")
+            formatted_results.append(f"Source: Inventory (Vector Search) | Content: {content} | Metadata: {metadata}")
             
         return "\n".join(formatted_results)
 
@@ -70,9 +98,9 @@ class HistorySearchTool(BaseTool):
             try:
                 # Naive parse, or just return the text which contains the code.
                 # Let's return the text prefixed with FOUND if high score.
-                return f"FOUND: {text}"
+                return f"Source: History | FOUND: {text}"
             except:
-                return f"FOUND: {text}"
+                return f"Source: History | FOUND: {text}"
         else:
             return "NOT_FOUND"
 

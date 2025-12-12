@@ -36,6 +36,30 @@ def main():
     
     # 4. Processing Loop
     print("Starting processing loop...")
+
+    # --- Define Agent/Task/Crew OUTSIDE the loop ---
+    task_description = """
+    Find the ERP inventory code for the following component:
+    Raw Input: {query}
+    
+    Details:
+    - Value/Comment: {comment} (Cleaned: {clean_val})
+    - Footprint: {footprint} (Cleaned: {clean_fp})
+    - Description: {description}
+    """
+    
+    task = Task(
+        description=task_description,
+        expected_output="The ERP Inventory Code (e.g., 10023456) or 'MANUAL_CHECK'",
+        agent=bom_matcher_agent
+    )
+    
+    crew = Crew(
+        agents=[bom_matcher_agent],
+        tasks=[task],
+        verbose=False 
+    )
+
     for index, row in df_raw.iterrows():
         # Development limit
         if index >= 5:
@@ -43,9 +67,6 @@ def main():
             break
             
         # Extract fields (Adjust column names based on actual CSV)
-        # Let's inspect the CSV columns first or assume standard names.
-        # Guide says: "Comment", "Footprint", "Description"
-        # We should try to be robust.
         comment = str(row.get('Comment', ''))
         footprint = str(row.get('Footprint', ''))
         description = str(row.get('Description', ''))
@@ -54,38 +75,25 @@ def main():
         
         # Clean data
         clean_fp = clean_footprint(footprint)
-        clean_val = clean_value(comment) # Assuming Comment holds the value
+        clean_val = clean_value(comment) 
         
-        query = f"{clean_val} {clean_fp} {description}"
+        # Construct structured query for the tool
+        query = f"Value:{clean_val}|Footprint:{clean_fp}"
         print(f"\n--- Processing Row {index + 1}: {query} ---")
         
-        # Create Task
-        task_description = f"""
-        Find the ERP inventory code for the following component:
-        Raw Input: {query}
-        
-        Details:
-        - Value/Comment: {comment} (Cleaned: {clean_val})
-        - Footprint: {footprint} (Cleaned: {clean_fp})
-        - Description: {description}
-        """
-        
-        task = Task(
-            description=task_description,
-            expected_output="The ERP Inventory Code (e.g., 10023456) or 'MANUAL_CHECK'",
-            agent=bom_matcher_agent
-        )
-        
-        # Create Crew
-        crew = Crew(
-            agents=[bom_matcher_agent],
-            tasks=[task],
-            verbose=False # Reduce noise in main output
-        )
+        # Prepare inputs for the task
+        inputs = {
+            'query': query,
+            'comment': comment,
+            'clean_val': clean_val,
+            'footprint': footprint,
+            'clean_fp': clean_fp,
+            'description': description
+        }
         
         # Execute
         try:
-            result = crew.kickoff()
+            result = crew.kickoff(inputs=inputs)
             # result is usually a string or TaskOutput
             matched_code = str(result).strip()
             print(f"Result: {matched_code}")
